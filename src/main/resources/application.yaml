@@ -1,17 +1,17 @@
+server:
+  port: ${PORT:8080}
+
 spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
 
-server:
-  port: ${PORT:8080}
-
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: true
-    open-in-view: false   # ✅ correct placement
+    open-in-view: false
     properties:
       hibernate:
         format_sql: true
