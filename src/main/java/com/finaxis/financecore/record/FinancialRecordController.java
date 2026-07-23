@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -39,9 +40,10 @@ public class FinancialRecordController {
     @ResponseStatus(HttpStatus.CREATED)
     public FinancialRecordResponse create(
             @Valid @RequestBody FinancialRecordRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @AuthenticationPrincipal AuthenticatedUser user
     ) {
-        return service.create(request, user.id());
+        return service.create(request, user.id(), idempotencyKey);
     }
 
     @GetMapping
