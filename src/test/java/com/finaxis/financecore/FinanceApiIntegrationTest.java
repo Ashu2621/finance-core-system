@@ -3,6 +3,8 @@ package com.finaxis.financecore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finaxis.financecore.auth.JwtService;
+import com.finaxis.financecore.audit.AuditEventRepository;
+import com.finaxis.financecore.record.IdempotencyRecordRepository;
 import com.finaxis.financecore.record.FinancialRecordRepository;
 import com.finaxis.financecore.user.UserAccount;
 import com.finaxis.financecore.user.UserRepository;
@@ -41,6 +43,12 @@ class FinanceApiIntegrationTest {
     private FinancialRecordRepository recordRepository;
 
     @Autowired
+    private IdempotencyRecordRepository idempotencyRepository;
+
+    @Autowired
+    private AuditEventRepository auditEventRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -48,6 +56,8 @@ class FinanceApiIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
+        auditEventRepository.deleteAll();
+        idempotencyRepository.deleteAll();
         recordRepository.deleteAll();
         userRepository.deleteAll();
     }
@@ -85,6 +95,7 @@ class FinanceApiIntegrationTest {
 
         mockMvc.perform(post("/api/records")
                         .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "viewer-create-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(recordJson()))
                 .andExpect(status().isForbidden())
@@ -98,6 +109,7 @@ class FinanceApiIntegrationTest {
 
         mockMvc.perform(post("/api/records")
                         .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "analyst-create-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(recordJson()))
                 .andExpect(status().isCreated())
@@ -115,6 +127,59 @@ class FinanceApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalExpense").value(2500))
                 .andExpect(jsonPath("$.transactionCount").value(1));
+
+        assertThat(auditEventRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void repeatedIdempotencyKeyReturnsOriginalRecordWithoutDuplicate() throws Exception {
+        UserAccount analyst = saveUser("Analyst", "retry@example.com", UserRole.ANALYST);
+        String token = jwtService.generateToken(analyst).token();
+
+        String first = mockMvc.perform(post("/api/records")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "payment-attempt-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recordJson()))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String repeated = mockMvc.perform(post("/api/records")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "payment-attempt-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recordJson()))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(objectMapper.readTree(repeated).get("id"))
+                .isEqualTo(objectMapper.readTree(first).get("id"));
+        assertThat(recordRepository.count()).isEqualTo(1);
+        assertThat(auditEventRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void adminCanReadImmutableAuditTrail() throws Exception {
+        UserAccount admin = saveUser("Admin", "audit-admin@example.com", UserRole.ADMIN);
+        UserAccount analyst = saveUser("Analyst", "audited@example.com", UserRole.ANALYST);
+
+        mockMvc.perform(post("/api/records")
+                        .header("Authorization", "Bearer " + jwtService.generateToken(analyst).token())
+                        .header("Idempotency-Key", "audited-create-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recordJson()))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/audit-events")
+                        .header("Authorization", "Bearer " + jwtService.generateToken(admin).token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].action").value("RECORD_CREATED"))
+                .andExpect(jsonPath("$.content[0].actorId").value(analyst.getId()));
     }
 
     @Test
@@ -144,6 +209,41 @@ class FinanceApiIntegrationTest {
         mockMvc.perform(get("/api/records")
                         .header("Authorization", "Bearer invalid-token"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void repeatedPasswordFailuresTemporarilyLockAccount() throws Exception {
+        saveUser("Target", "lockout@example.com", UserRole.VIEWER);
+        String invalidLogin = """
+                {
+                  "email": "lockout@example.com",
+                  "password": "definitely-wrong"
+                }
+                """;
+
+        for (int attempt = 0; attempt < 5; attempt++) {
+            mockMvc.perform(post("/api/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(invalidLogin))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
+        }
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "email": "lockout@example.com",
+                                  "password": "Secure123"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
+
+        UserAccount locked = userRepository
+                .findByEmailIgnoreCase("lockout@example.com")
+                .orElseThrow();
+        assertThat(locked.getLockedUntil()).isNotNull();
     }
 
     private UserAccount saveUser(String name, String email, UserRole role) {

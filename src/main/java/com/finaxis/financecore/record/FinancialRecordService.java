@@ -1,5 +1,6 @@
 package com.finaxis.financecore.record;
 
+import com.finaxis.financecore.audit.AuditService;
 import com.finaxis.financecore.common.dto.FinancialRecordRequest;
 import com.finaxis.financecore.common.dto.FinancialRecordResponse;
 import com.finaxis.financecore.common.error.ApiException;
@@ -15,6 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.Clock;
+import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 @Service
 @RequiredArgsConstructor
@@ -22,20 +29,51 @@ public class FinancialRecordService {
 
     private final FinancialRecordRepository repository;
     private final UserRepository userRepository;
+    private final AuditService auditService;
+    private final IdempotencyRecordRepository idempotencyRepository;
+    private final Clock clock;
 
     @Transactional
-    public FinancialRecordResponse create(FinancialRecordRequest request, Long userId) {
-        UserAccount user = userRepository.findByIdAndActiveTrue(userId)
+    public FinancialRecordResponse create(
+            FinancialRecordRequest request,
+            Long userId,
+            String idempotencyKey
+    ) {
+        validateIdempotencyKey(idempotencyKey);
+        String requestHash = hash(request);
+        UserAccount user = userRepository.findActiveByIdForUpdate(userId)
                 .orElseThrow(() -> new ApiException(
                         HttpStatus.UNAUTHORIZED,
                         "USER_INACTIVE",
                         "User account is not active"
                 ));
+        IdempotencyRecord existing = idempotencyRepository
+                .findByUserIdAndKey(userId, idempotencyKey)
+                .orElse(null);
+        if (existing != null) {
+            if (!existing.getRequestHash().equals(requestHash)) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "Idempotency-Key was already used for a different request"
+                );
+            }
+            return mapToResponse(existing.getRecord());
+        }
 
         FinancialRecord record = new FinancialRecord();
         apply(record, request);
         record.setUser(user);
-        return mapToResponse(repository.save(record));
+        FinancialRecord saved = repository.save(record);
+        IdempotencyRecord idempotency = new IdempotencyRecord();
+        idempotency.setUser(user);
+        idempotency.setKey(idempotencyKey);
+        idempotency.setRequestHash(requestHash);
+        idempotency.setRecord(saved);
+        idempotency.setCreatedAt(Instant.now(clock));
+        idempotencyRepository.save(idempotency);
+        auditService.record(userId, "RECORD_CREATED", "FINANCIAL_RECORD", saved.getId());
+        return mapToResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -54,6 +92,7 @@ public class FinancialRecordService {
         FinancialRecord record = findOwned(id, userId);
         record.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
         repository.save(record);
+        auditService.record(userId, "RECORD_DELETED", "FINANCIAL_RECORD", record.getId());
     }
 
     @Transactional
@@ -64,7 +103,9 @@ public class FinancialRecordService {
     ) {
         FinancialRecord record = findOwned(id, userId);
         apply(record, request);
-        return mapToResponse(repository.save(record));
+        FinancialRecord saved = repository.save(record);
+        auditService.record(userId, "RECORD_UPDATED", "FINANCIAL_RECORD", saved.getId());
+        return mapToResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -119,6 +160,34 @@ public class FinancialRecordService {
             return null;
         }
         return value.trim();
+    }
+
+    private void validateIdempotencyKey(String key) {
+        if (key == null || !key.matches("^[A-Za-z0-9._:-]{8,128}$")) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_IDEMPOTENCY_KEY",
+                    "Idempotency-Key must be 8-128 URL-safe characters"
+            );
+        }
+    }
+
+    private String hash(FinancialRecordRequest request) {
+        String canonical = "%s|%s|%s|%s|%s".formatted(
+                request.amount().stripTrailingZeros().toPlainString(),
+                request.type(),
+                request.category().trim(),
+                request.date(),
+                normalizeOptional(request.note())
+        );
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(canonical.getBytes(StandardCharsets.UTF_8))
+            );
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     private FinancialRecordResponse mapToResponse(FinancialRecord record) {

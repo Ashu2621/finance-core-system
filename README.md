@@ -12,6 +12,11 @@ A production-oriented personal finance platform built with Spring Boot, React, T
 - React 19 + TypeScript dashboard bundled into the Spring Boot application
 - PostgreSQL migrations through Flyway, while retaining MySQL compatibility
 - Health/readiness probes, graceful shutdown, trace IDs, and structured API errors
+- Transactional, admin-readable audit history for financial and privileged mutations
+- Database-backed idempotency keys that prevent duplicate writes during retries
+- Timed account lockout after repeated credential failures
+- Prometheus metrics and documented SLO/error-budget policy
+- Real PostgreSQL migration validation with Testcontainers in CI
 - Multi-stage, non-root Docker image
 - GitHub Actions CI, CodeQL scanning, Dependabot, and JaCoCo reports
 - Render Blueprint and Docker Compose deployment paths
@@ -118,6 +123,10 @@ Bootstrap credentials are only used when the configured email does not already e
 | `PUT` | `/api/users/{id}/role` | Admin |
 | `PUT` | `/api/users/{id}/activate` | Admin |
 | `PUT` | `/api/users/{id}/deactivate` | Admin |
+| `GET` | `/api/audit-events` | Admin |
+
+`POST /api/records` requires an `Idempotency-Key` header containing 8-128 URL-safe
+characters. A client may safely retry the same payload with the same key.
 
 Swagger's **Authorize** dialog accepts the token returned by login.
 
@@ -148,3 +157,9 @@ The first deploy runs the Flyway migration, creates the optional administrator, 
 - Authentication failures return `401`; role failures return `403`.
 
 For vulnerability reporting, see [SECURITY.md](SECURITY.md).
+
+Engineering references:
+
+- [Architecture and correctness model](docs/architecture.md)
+- [Service-level objectives](docs/slo.md)
+- [Threat model](docs/threat-model.md)
