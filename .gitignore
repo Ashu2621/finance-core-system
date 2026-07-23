@@ -31,3 +31,18 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Frontend ###
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+### Runtime secrets ###
+.env
+.env.*
+!.env.example
+
+### Operating system ###
+.DS_Store
+Thumbs.db
