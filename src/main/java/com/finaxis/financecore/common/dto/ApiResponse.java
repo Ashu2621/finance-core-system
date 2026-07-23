@@ -1,13 +1,12 @@
 package com.finaxis.financecore.common.dto;
 
-import lombok.Builder;
-import lombok.Getter;
+public record ApiResponse<T>(boolean success, T data, String message) {
 
-@Getter
-@Builder
-public class ApiResponse<T> {
+    public static <T> ApiResponse<T> success(T data) {
+        return new ApiResponse<>(true, data, null);
+    }
 
-    private boolean success;
-    private T data;
-    private String message;
+    public static <T> ApiResponse<T> success(T data, String message) {
+        return new ApiResponse<>(true, data, message);
+    }
 }
