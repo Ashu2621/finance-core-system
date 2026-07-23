@@ -1,12 +1,20 @@
 package com.finaxis.financecore.auth;
 
+import com.finaxis.financecore.common.dto.AuthResponse;
 import com.finaxis.financecore.common.dto.LoginRequest;
 import com.finaxis.financecore.common.dto.RegisterRequest;
+import com.finaxis.financecore.common.dto.UserResponse;
+import com.finaxis.financecore.common.error.ApiException;
 import com.finaxis.financecore.user.UserAccount;
 import com.finaxis.financecore.user.UserRepository;
+import com.finaxis.financecore.user.UserRole;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -14,41 +22,57 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final JwtService jwtService;
-    private final BCryptPasswordEncoder passwordEncoder;
+    private final PasswordEncoder passwordEncoder;
 
-    // LOGIN
-    public String login(LoginRequest request) {
+    @Transactional(readOnly = true)
+    public AuthResponse login(LoginRequest request) {
+        String email = normalizeEmail(request.email());
+        UserAccount user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(this::invalidCredentials);
 
-        UserAccount user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Invalid credentials"));
-
-        if (!user.isActive()) {
-            throw new RuntimeException("User is inactive");
+        if (!user.isActive() || !passwordEncoder.matches(request.password(), user.getPassword())) {
+            throw invalidCredentials();
         }
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid credentials");
-        }
-
-        return jwtService.generateToken(user.getId(), user.getRole().name());
+        return issueToken(user);
     }
 
-
-    public void register(RegisterRequest request) {
-
-        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
-            throw new RuntimeException("Email already exists");
+    @Transactional
+    public AuthResponse register(RegisterRequest request) {
+        String email = normalizeEmail(request.email());
+        if (userRepository.existsByEmailIgnoreCase(email)) {
+            throw new ApiException(HttpStatus.CONFLICT, "EMAIL_EXISTS", "Email is already registered");
         }
 
         UserAccount user = new UserAccount();
-        user.setName(request.getName());
-        user.setEmail(request.getEmail());
+        user.setName(request.name().trim());
+        user.setEmail(email);
+        user.setPassword(passwordEncoder.encode(request.password()));
+        user.setRole(UserRole.VIEWER);
+        user.setActive(true);
 
+        return issueToken(userRepository.save(user));
+    }
 
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
+    private AuthResponse issueToken(UserAccount user) {
+        JwtService.TokenDetails token = jwtService.generateToken(user);
+        return new AuthResponse(
+                token.token(),
+                "Bearer",
+                token.expiresAt(),
+                UserResponse.from(user)
+        );
+    }
 
-        user.setRole(request.getRole());
+    private String normalizeEmail(String email) {
+        return email.trim().toLowerCase(Locale.ROOT);
+    }
 
-        userRepository.save(user);
+    private ApiException invalidCredentials() {
+        return new ApiException(
+                HttpStatus.UNAUTHORIZED,
+                "INVALID_CREDENTIALS",
+                "Invalid email or password"
+        );
     }
 }
