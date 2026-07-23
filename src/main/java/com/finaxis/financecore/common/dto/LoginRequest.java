@@ -1,11 +1,11 @@
 package com.finaxis.financecore.common.dto;
 
-import lombok.Getter;
-import lombok.Setter;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
-@Getter
-@Setter
-public class LoginRequest {
-    private String email;
-    private String password;
+public record LoginRequest(
+        @NotBlank @Email @Size(max = 254) String email,
+        @NotBlank @Size(min = 8, max = 72) String password
+) {
 }

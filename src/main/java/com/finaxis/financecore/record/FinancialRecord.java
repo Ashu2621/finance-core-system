@@ -12,22 +12,33 @@ import java.time.LocalDate;
 @Entity
 @Getter
 @Setter
-@Table(name = "records")
+@Table(
+        name = "records",
+        indexes = {
+                @Index(name = "idx_records_user_deleted_date", columnList = "user_id, deleted_at, date"),
+                @Index(name = "idx_records_user_type", columnList = "user_id, type"),
+                @Index(name = "idx_records_category", columnList = "category")
+        }
+)
 public class FinancialRecord extends BaseEntity {
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
     private RecordType type;
 
+    @Column(nullable = false, length = 80)
     private String category;
 
+    @Column(nullable = false)
     private LocalDate date;
 
+    @Column(length = 500)
     private String note;
 
-    @ManyToOne
-    @JoinColumn(name = "user_id")
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
     private UserAccount user;
 }

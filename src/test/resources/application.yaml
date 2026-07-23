@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:financecore-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password:
+  flyway:
+    enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+app:
+  security:
+    jwt:
+      secret: test-secret-that-is-long-enough-for-hmac-sha256-signatures
+      access-token-ttl: PT15M
+  cors:
+    allowed-origins: http://localhost:5173

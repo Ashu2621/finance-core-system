@@ -1,10 +1,11 @@
 package com.finaxis.financecore.common.dto;
 
-import lombok.Builder;
-import lombok.Getter;
+import java.time.Instant;
 
-@Getter
-@Builder
-public class AuthResponse {
-    private String token;
+public record AuthResponse(
+        String token,
+        String tokenType,
+        Instant expiresAt,
+        UserResponse user
+) {
 }

@@ -1,44 +1,61 @@
 package com.finaxis.financecore.auth;
 
-import io.jsonwebtoken.*;
+import com.finaxis.financecore.config.JwtProperties;
+import com.finaxis.financecore.user.UserAccount;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.security.Key;
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Date;
 
 @Service
 public class JwtService {
 
-    private final String SECRET = "mysecretkeymysecretkeymysecretkey"; // min 32 chars
+    private final JwtProperties properties;
+    private final Clock clock;
+    private final SecretKey signingKey;
 
-    private Key getKey() {
-        return Keys.hmacShaKeyFor(SECRET.getBytes());
+    @Autowired
+    public JwtService(JwtProperties properties) {
+        this(properties, Clock.systemUTC());
     }
 
-    public String generateToken(Long userId, String role) {
-        return Jwts.builder()
-                .setSubject(String.valueOf(userId))
-                .claim("role", role)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + 86400000))
-                .signWith(getKey(), SignatureAlgorithm.HS256)
+    JwtService(JwtProperties properties, Clock clock) {
+        this.properties = properties;
+        this.clock = clock;
+        this.signingKey = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
+    }
+
+    public TokenDetails generateToken(UserAccount user) {
+        Instant issuedAt = clock.instant();
+        Instant expiresAt = issuedAt.plus(properties.accessTokenTtl());
+
+        String token = Jwts.builder()
+                .subject(user.getId().toString())
+                .claim("email", user.getEmail())
+                .claim("role", user.getRole().name())
+                .issuedAt(Date.from(issuedAt))
+                .expiration(Date.from(expiresAt))
+                .signWith(signingKey)
                 .compact();
+
+        return new TokenDetails(token, expiresAt);
     }
 
-    public Claims extractClaims(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(getKey())
+    public Claims parse(String token) {
+        return Jwts.parser()
+                .verifyWith(signingKey)
                 .build()
-                .parseClaimsJws(token)
-                .getBody();
+                .parseSignedClaims(token)
+                .getPayload();
     }
 
-    public Long extractUserId(String token) {
-        return Long.parseLong(extractClaims(token).getSubject());
-    }
-
-    public String extractRole(String token) {
-        return extractClaims(token).get("role", String.class);
+    public record TokenDetails(String token, Instant expiresAt) {
     }
 }

@@ -4,10 +4,10 @@ import com.finaxis.financecore.common.dto.DashboardResponse;
 import com.finaxis.financecore.record.FinancialRecordRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Service
@@ -16,28 +16,22 @@ public class DashboardService {
 
     private final FinancialRecordRepository repository;
 
+    @Transactional(readOnly = true)
     public DashboardResponse getSummary(Long userId) {
-
         BigDecimal income = repository.getTotalIncome(userId);
         BigDecimal expense = repository.getTotalExpense(userId);
 
-        BigDecimal balance = income.subtract(expense);
+        Map<String, BigDecimal> categoryMap = new LinkedHashMap<>();
+        repository.getExpenseCategorySummary(userId).forEach(row ->
+                categoryMap.put((String) row[0], (BigDecimal) row[1])
+        );
 
-        // category breakdown
-        List<Object[]> raw = repository.getCategorySummary(userId);
-
-        Map<String, BigDecimal> categoryMap = new HashMap<>();
-        for (Object[] row : raw) {
-            String category = (String) row[0];
-            BigDecimal amount = (BigDecimal) row[1];
-            categoryMap.put(category, amount);
-        }
-
-        return DashboardResponse.builder()
-                .totalIncome(income)
-                .totalExpense(expense)
-                .balance(balance)
-                .categoryBreakdown(categoryMap)
-                .build();
+        return new DashboardResponse(
+                income,
+                expense,
+                income.subtract(expense),
+                repository.countByUserIdAndDeletedAtIsNull(userId),
+                categoryMap
+        );
     }
 }
