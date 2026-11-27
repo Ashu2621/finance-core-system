@@ -81,7 +81,11 @@ export const api = {
   createRecord: (token: string, input: RecordInput) =>
     request<FinancialRecord>(
       "/api/records",
-      { method: "POST", body: JSON.stringify(input) },
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify(input)
+      },
       token
     ),
 

@@ -15,6 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 
 @Service
 @RequiredArgsConstructor
@@ -23,17 +26,31 @@ public class AuthService {
     private final UserRepository userRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
+    private final Clock clock;
 
-    @Transactional(readOnly = true)
+    private static final int MAX_FAILED_ATTEMPTS = 5;
+    private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
+
     public AuthResponse login(LoginRequest request) {
         String email = normalizeEmail(request.email());
         UserAccount user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(this::invalidCredentials);
 
-        if (!user.isActive() || !passwordEncoder.matches(request.password(), user.getPassword())) {
+        Instant now = clock.instant();
+        if (!user.isActive() || isLocked(user, now)) {
             throw invalidCredentials();
         }
 
+        if (!passwordEncoder.matches(request.password(), user.getPassword())) {
+            registerFailedAttempt(user, now);
+            throw invalidCredentials();
+        }
+
+        if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
+            user.setFailedLoginAttempts(0);
+            user.setLockedUntil(null);
+            userRepository.save(user);
+        }
         return issueToken(user);
     }
 
@@ -74,5 +91,19 @@ public class AuthService {
                 "INVALID_CREDENTIALS",
                 "Invalid email or password"
         );
+    }
+
+    private boolean isLocked(UserAccount user, Instant now) {
+        return user.getLockedUntil() != null && user.getLockedUntil().isAfter(now);
+    }
+
+    private void registerFailedAttempt(UserAccount user, Instant now) {
+        int attempts = user.getFailedLoginAttempts() + 1;
+        user.setFailedLoginAttempts(attempts);
+        if (attempts >= MAX_FAILED_ATTEMPTS) {
+            user.setLockedUntil(now.plus(LOCK_DURATION));
+            user.setFailedLoginAttempts(0);
+        }
+        userRepository.save(user);
     }
 }

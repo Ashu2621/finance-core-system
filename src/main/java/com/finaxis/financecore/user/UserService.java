@@ -1,5 +1,6 @@
 package com.finaxis.financecore.user;
 
+import com.finaxis.financecore.audit.AuditService;
 import com.finaxis.financecore.common.dto.UpdateUserRoleRequest;
 import com.finaxis.financecore.common.dto.UserResponse;
 import com.finaxis.financecore.common.error.ApiException;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
     @Transactional(readOnly = true)
     public Page<UserResponse> getAll(int page, int size) {
@@ -36,7 +38,14 @@ public class UserService {
         }
         UserAccount user = findUser(id);
         user.setActive(active);
-        return UserResponse.from(userRepository.save(user));
+        UserAccount saved = userRepository.save(user);
+        auditService.record(
+                actingUserId,
+                active ? "USER_ACTIVATED" : "USER_DEACTIVATED",
+                "USER_ACCOUNT",
+                saved.getId()
+        );
+        return UserResponse.from(saved);
     }
 
     @Transactional
@@ -50,7 +59,9 @@ public class UserService {
         }
         UserAccount user = findUser(id);
         user.setRole(request.role());
-        return UserResponse.from(userRepository.save(user));
+        UserAccount saved = userRepository.save(user);
+        auditService.record(actingUserId, "USER_ROLE_CHANGED", "USER_ACCOUNT", saved.getId());
+        return UserResponse.from(saved);
     }
 
     private UserAccount findUser(Long id) {
